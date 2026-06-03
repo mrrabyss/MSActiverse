@@ -1,0 +1,99 @@
+name: Build & Release
+
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "src/**"
+
+jobs:
+  build-and-release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necessary to look at previous commits
+
+      - name: Check if version changed
+        id: version
+        run: |
+          # 1. Safely extract CURRENT version from [package] section
+          CURRENT=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep '^version' | head -n 1 | sed 's/version = "\(.*\)"/\1/' | tr -d '[:space:]')
+          
+          # 2. Check if a parent commit actually exists to avoid HEAD~1 crashes
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            PREVIOUS_CONTENT=$(git show HEAD~1:Cargo.toml 2>/dev/null || echo "")
+            if [ -n "$PREVIOUS_CONTENT" ]; then
+              PREVIOUS=$(echo "$PREVIOUS_CONTENT" | sed -n '/^\[package\]/,/^\[/p' | grep '^version' | head -n 1 | sed 's/version = "\(.*\)"/\1/' | tr -d '[:space:]')
+            else
+              PREVIOUS=""
+            fi
+          else
+            PREVIOUS=""
+          fi
+
+          echo "Current version:  $CURRENT"
+          echo "Previous version: $PREVIOUS"
+
+          if [ "$CURRENT" = "$PREVIOUS" ]; then
+            echo "Version unchanged — skipping release."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version changed from '$PREVIOUS' to '$CURRENT' — will release."
+            echo "changed=true"    >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+            echo "tag=v$CURRENT"    >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Parse commit message for release body
+        id: commit
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          # Grabs everything after the first paragraph/line cleanly
+          RELEASE_BODY=$(git log -1 --pretty=%B | tail -n +3)
+
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$RELEASE_BODY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust stable
+        if: steps.version.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        if: steps.version.outputs.changed == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build for Windows x86_64
+        if: steps.version.outputs.changed == 'true'
+        run: cross build --release --target x86_64-pc-windows-gnu
+
+      - name: Build for Windows aarch64
+        if: steps.version.outputs.changed == 'true'
+        run: cross build --release --target aarch64-pc-windows-gnullvm
+
+      - name: Rename binaries
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          cp target/x86_64-pc-windows-gnu/release/MSActiverse.exe     "MSActiverse-${TAG}-x86_64.exe"
+          cp target/aarch64-pc-windows-gnullvm/release/MSActiverse.exe "MSActiverse-${TAG}-arm64.exe"
+
+      - name: Create GitHub release
+        if: steps.version.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body: ${{ steps.commit.outputs.body }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            MSActiverse-${{ steps.version.outputs.tag }}-x86_64.exe
+            MSActiverse-${{ steps.version.outputs.tag }}-arm64.exe
