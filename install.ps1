@@ -10,11 +10,10 @@ Write-Host @"
 ░░░░░     ░░░░░  ░░░░░░░░░  ░░░░░   ░░░░░  ░░░░░░     ░░░░░  ░░░░░    ░░░░░     ░░░░░░  ░░░░░     ░░░░░░   ░░░░░░  
 Downloading....
 "@
-$isAdmin = ([Security.Principal.WindowsPrincipal]
-            [Security.Principal.WindowsIdentity]::GetCurrent()
-           ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
+    Write-Host "[*] Relaunching as Administrator..." -ForegroundColor Yellow
     Start-Process powershell -Verb RunAs `
         -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
     exit
@@ -49,6 +48,7 @@ $asset    = $release.assets | Where-Object { $_.name -eq $fileName } | Select-Ob
 
 if (-not $asset) {
     Write-Error "Asset '$fileName' not found in release $version."
+    Write-Host "`nAvailable assets:" -ForegroundColor Yellow
     $release.assets | ForEach-Object { Write-Host "  - $($_.name)" }
     Read-Host "`nPress Enter to exit"
     exit 1
@@ -61,6 +61,7 @@ $outFile = Join-Path $outDir $asset.name
 $ProgressPreference = "SilentlyContinue"
 try {
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $outFile -Headers $headers -ErrorAction Stop
+    Write-Host "[+] Download complete." -ForegroundColor Green
 } catch {
     Write-Error "Download failed: $_"
     Read-Host "`nPress Enter to exit"
